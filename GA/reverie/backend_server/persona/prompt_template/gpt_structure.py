@@ -6,8 +6,13 @@ Description: Wrapper functions for calling OpenAI APIs.
 """
 import json
 import random
-import openai
+from openai import OpenAI
 import time
+
+from langchain.output_parsers import PydanticOutputParser
+from langchain_core.prompts import PromptTemplate
+from langchain_core.pydantic_v1 import BaseModel, Field, validator
+from langchain_openai import ChatOpenAI
 
 from utils import *
 
@@ -15,9 +20,15 @@ import inspect
 from metrics import metrics
 from pool import get_embedding_pool, update_embedding_pool
 
+model_to_run = ChatOpenAI(temperature=0, api_key="004b0a054026f7f91a65dc0ef1d4ae0ff8a1ba077a5dd8942426c23b10bc117d", base_url="https://api.together.xyz", model="meta-llama/Llama-3-8b-chat-hf")
 
-openai.api_key = openai_api_key
+openai_client = OpenAI(
+    # This is the default and can be omitted
+    # base_url=base_api_url,
+    api_key=openai_api_key,
+)
 
+client = openai_client
 
 def get_caller_function_names():
     stack = inspect.stack()
@@ -35,10 +46,10 @@ def ChatGPT_single_request(prompt, time_sleep_second=0.1):
     temp_sleep(time_sleep_second)
 
     start_time = time.time()
-    model_name = "gpt-35-turbo"
+    model_name = "gpt-3.5-turbo-0125"
 
     if key_type == 'azure':
-        completion = openai.ChatCompletion.create(
+        completion = client.chat.completions.create(
             api_type=openai_api_type,
             api_version=openai_api_version,
             api_base=openai_api_base,
@@ -46,10 +57,10 @@ def ChatGPT_single_request(prompt, time_sleep_second=0.1):
             engine=model_name,
             messages=[{"role": "user", "content": prompt}]
         )
-        message = completion["choices"][0]["message"]["content"]
+        message = completion.choices[0].message.content
     elif key_type == 'llama':
         model_name = 'llama-7B'
-        completion = openai.ChatCompletion.create(
+        completion = client.chat.completions.create(
             api_type=openai_api_type,
             api_version=openai_api_version,
             api_base=openai_api_base,
@@ -57,16 +68,15 @@ def ChatGPT_single_request(prompt, time_sleep_second=0.1):
             engine=model_name,
             messages=[{"role": "user", "content": prompt}]
         )
-        message = completion["choices"][-1]["message"]["content"]
+        message = completion.choices[0].message.content
     else:
-        completion = openai.ChatCompletion.create(
+        completion = client.chat.completions.create(
             model=model_name,
             messages=[{"role": "user", "content": prompt}]
         )
-        message = completion["choices"][0]["message"]["content"]
-
+        message = completion.choices[0].message.content
     function_name = get_caller_function_names()
-    total_token = completion['usage']['total_tokens']
+    total_token = completion.usage.total_tokens
     time_use = time.time() - start_time
     metrics.call_record(function_name, model_name, total_token, time_use)
     return message
@@ -91,11 +101,11 @@ def GPT4_request(prompt):
     temp_sleep()
 
     try:
-        completion = openai.ChatCompletion.create(
-            model="gpt-4",
+        completion = client.chat.completions.create(
+            model="gpt-3.5-turbo-0125",
             messages=[{"role": "user", "content": prompt}]
         )
-        return completion["choices"][0]["message"]["content"]
+        return completion.choices[0].message.content
 
     except Exception as e:
         metrics.fail_record(e)
@@ -241,37 +251,22 @@ def ChatGPT_safe_generate_response_OLD(prompt,
 
 def gpt_request_all_version(prompt, gpt_parameter):
     start_time = time.time()
-    if gpt_parameter['api_type'] == 'azure':
-        response = openai.Completion.create(
-            api_base=openai_completion_api_base,
-            api_key=openai_completion_api_key,
-            api_type=openai_api_type,
-            api_version=openai_api_version,
-            engine=gpt_parameter["engine"],
-            prompt=prompt,
-            temperature=gpt_parameter["temperature"],
-            max_tokens=gpt_parameter["max_tokens"],
-            top_p=gpt_parameter["top_p"],
-            frequency_penalty=gpt_parameter["frequency_penalty"],
-            presence_penalty=gpt_parameter["presence_penalty"],
-            stream=gpt_parameter["stream"],
-            stop=gpt_parameter["stop"], )
-    else:
-        response = openai.Completion.create(
-            model=gpt_parameter["engine"],
-            prompt=prompt,
-            temperature=gpt_parameter["temperature"],
-            max_tokens=gpt_parameter["max_tokens"],
-            top_p=gpt_parameter["top_p"],
-            frequency_penalty=gpt_parameter["frequency_penalty"],
-            presence_penalty=gpt_parameter["presence_penalty"],
-            stream=gpt_parameter["stream"],
-            stop=gpt_parameter["stop"], )
+    response = client.chat.completions.create(
+        model=gpt_parameter["engine"],
+        messages=[{"role": "user", "content": prompt}],
+        temperature=gpt_parameter["temperature"],
+        max_tokens=gpt_parameter["max_tokens"],
+        top_p=gpt_parameter["top_p"],
+        frequency_penalty=gpt_parameter["frequency_penalty"],
+        presence_penalty=gpt_parameter["presence_penalty"],
+        stream=gpt_parameter["stream"],
+        stop=gpt_parameter["stop"], )
 
     function_name = get_caller_function_names()
-    total_token = response['usage']['total_tokens']
+    total_token = response.usage.total_tokens
     time_use = time.time() - start_time
-    metrics.call_record(function_name, gpt_parameter["engine"], total_token, time_use)
+    metrics.call_record(
+        function_name, gpt_parameter["engine"], total_token, time_use)
     return response
 
 
@@ -291,7 +286,7 @@ def GPT_request(prompt, gpt_parameter):
     try:
         response = gpt_request_all_version(prompt, gpt_parameter)
 
-        return response.choices[0].text
+        return response.choices[0].message.content
     except Exception as e:
         metrics.fail_record(e)
         print("TOKEN LIMIT EXCEEDED")
@@ -322,7 +317,8 @@ def generate_prompt(curr_input, prompt_lib_file):
     for count, i in enumerate(curr_input):
         prompt = prompt.replace(f"!<INPUT {count}>!", i)
     if "<commentblockmarker>###</commentblockmarker>" in prompt:
-        prompt = prompt.split("<commentblockmarker>###</commentblockmarker>")[1]
+        prompt = prompt.split(
+            "<commentblockmarker>###</commentblockmarker>")[1]
     return prompt.strip()
 
 
@@ -358,7 +354,7 @@ def get_embedding(text, model="text-embedding-ada-002"):
 
     start_time = time.time()
     if key_type == 'azure':
-        response = openai.Embedding.create(
+        response = client.embeddings.create(
             api_base=openai_api_base,
             api_key=openai_api_key,
             api_type=openai_api_type,
@@ -366,16 +362,16 @@ def get_embedding(text, model="text-embedding-ada-002"):
             input=[text],
             engine=model)
     else:
-        response = openai.Embedding.create(
+        response = client.embeddings.create(
             input=[text], model=model)
 
     function_name = get_caller_function_names()
-    total_token = response['usage']['total_tokens']
+    total_token = response.usage.total_tokens
     time_use = time.time() - start_time
     metrics.call_record(function_name, model, total_token, time_use)
 
-    update_embedding_pool(text, response['data'][0]['embedding'])
-    return response['data'][0]['embedding']
+    update_embedding_pool(text, response.data[0].embedding)
+    return response.data[0].embedding
 
 
 if __name__ == '__main__':
@@ -387,7 +383,6 @@ if __name__ == '__main__':
     prompt_lib_file = "prompt_template/test_prompt_July5.txt"
     prompt = generate_prompt(curr_input, prompt_lib_file)
 
-
     def __func_validate(gpt_response):
         if len(gpt_response.strip()) <= 1:
             return False
@@ -395,11 +390,9 @@ if __name__ == '__main__':
             return False
         return True
 
-
     def __func_clean_up(gpt_response):
         cleaned_response = gpt_response.strip()
         return cleaned_response
-
 
     output = safe_generate_response(prompt,
                                     gpt_parameter,

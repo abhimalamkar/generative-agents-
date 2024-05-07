@@ -60,7 +60,7 @@ def compress(sim_code):
 
 
 if __name__ == '__main__':
-  compress("<the new simulation>")
+  compress("aga_3_person_new")
 
 
 

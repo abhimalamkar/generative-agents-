@@ -679,8 +679,8 @@ def opt():
                                                  'frontend')
     parser.add_argument('-o', '--origin', type=str, default='base_the_ville_isabella_maria_klaus',
                         help='the forked simulation')
-    parser.add_argument('-t', '--target', type=str, help='the new simulation')
-    parser.add_argument('-s', '--step', type=int, help='the total run step')
+    parser.add_argument('-t', '--target', type=str, help='the new simulation', default='offline')
+    parser.add_argument('-s', '--step', type=int, help='the total run step', default=1000)
     parser.add_argument('--disable_policy', action='store_false', help='Disable the lifestyle policy')
     parser.add_argument('--disable_relationship', action='store_false', help='Disable the social impression memory')
     parser.add_argument('-c', '--call', type=str, help='call interview with agent')
